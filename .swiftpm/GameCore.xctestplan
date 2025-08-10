@@ -1,0 +1,24 @@
+{
+  "configurations" : [
+    {
+      "id" : "5489E161-AE16-4C47-A59E-F9F11C297D34",
+      "name" : "Test Scheme Action",
+      "options" : {
+
+      }
+    }
+  ],
+  "defaultOptions" : {
+
+  },
+  "testTargets" : [
+    {
+      "target" : {
+        "containerPath" : "container:",
+        "identifier" : "GameCoreTests",
+        "name" : "GameCoreTests"
+      }
+    }
+  ],
+  "version" : 1
+}
