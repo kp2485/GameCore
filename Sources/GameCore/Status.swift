@@ -10,7 +10,14 @@ import Foundation
 /// Simple time-based status with stacking & tags.
 /// Extend later with dispel types, periodic ticks, etc.
 public struct Status: Hashable, Sendable {
-    public enum Id: String, Sendable { case staggered, regen, shield }
+    public enum Id: String, Sendable {
+        case staggered
+        case regen
+        case shield
+        case poison      // ← added
+        case paralyze    // ← added
+    }
+
     public enum StackRule: Sendable, Equatable, Hashable { case replace, stack(Int) }
 
     public let id: Id

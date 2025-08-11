@@ -59,6 +59,21 @@ public extension TurnEngine where A == Character {
                 )
 
                 allEvents.append(Event(kind: .turnStart, timestamp: tick, data: ["actor": actor.name]))
+                
+                // Skip if paralyzed
+                if rt.isParalyzed(actor) {
+                    allEvents.append(Event(kind: .note, timestamp: tick, data: [
+                        "skip": "paralyzed", "actor": actor.name
+                    ]))
+                    // End-of-turn poison and status ticking
+                    allEvents.append(contentsOf: rt.applyPoisonTick(on: actor))
+                    allEvents.append(contentsOf: rt.tickStatuses())
+                    enc = rt.encounter
+                    tick &+= 1
+                    if enc.foesDefeated { return (allEvents, enc, .alliesWin) }
+                    if enc.alliesDefeated { return (allEvents, enc, .foesWin) }
+                    continue
+                }
 
                 // Pick controller by side/index
                 let plan: ActionPlan<Character>?
@@ -74,7 +89,8 @@ public extension TurnEngine where A == Character {
                     allEvents.append(contentsOf: ev)
                 }
 
-                // Tick statuses at end of the actor’s turn (optional)
+                // Tick statuses at end of the actor’s turn
+                allEvents.append(contentsOf: rt.applyPoisonTick(on: actor))
                 allEvents.append(contentsOf: rt.tickStatuses())
 
                 // Write back encounter changes

@@ -188,6 +188,45 @@ public struct CombatRuntime<A: GameActor>: Sendable {
     }
 }
 
+public extension CombatRuntime {
+    /// True if actor currently has the 'paralyze' status.
+    func isParalyzed(_ actor: A) -> Bool {
+        status(of: .paralyze, on: actor) != nil
+    }
+
+    /// Apply poison damage (if any) to `actor`. Damage is 2 per stack.
+    /// Emits a `.damage` event and optional `.death` if HP hits 0.
+    @discardableResult
+    mutating func applyPoisonTick(on actor: A) -> [Event] {
+        guard let s = status(of: .poison, on: actor), s.stacks > 0 else { return [] }
+        let perStack = 2
+        let total = perStack * s.stacks
+
+        var out: [Event] = []
+        if var hp = hp(of: actor) {
+            let before = hp
+            hp = max(0, before - total)
+            setHP(of: actor, to: hp)
+
+            out.append(Event(kind: .damage, timestamp: tick, data: [
+                "amount": String(total),
+                "source": "poison",
+                "target": actor.name,
+                "hpBefore": String(before),
+                "hpAfter": String(hp)
+            ]))
+
+            if hp == 0 {
+                out.append(Event(kind: .death, timestamp: tick, data: [
+                    "target": actor.name,
+                    "by": "poison"
+                ]))
+            }
+        }
+        return out
+    }
+}
+
 // MARK: - Initiative & engine
 
 public struct InitiativeRoll<A: GameActor>: Sendable, Equatable {
@@ -225,46 +264,81 @@ public struct TurnEngine<A: GameActor>: Sendable {
 
     /// Execute one round: each living combatant performs a basic Attack.
     public func runOneRound(
-        encounter: Encounter<A>,
-        seed: UInt64
-    ) -> (events: [Event], result: Encounter<A>) {
-        var enc = encounter
-        var events: [Event] = []
-        let order = initiativeOrder(for: enc, seed: seed)
+            encounter: Encounter<A>,
+            seed: UInt64,
+            initialStatuses: [UUID: [Status.Id: Status]] = [:],
+            initialMP: [UUID: Int] = [:],
+            initialEquipment: [UUID: Equipment] = [:]
+        ) -> (events: [Event], result: Encounter<A>) {
 
-        var tick: UInt64 = 0
-        var rng: any Randomizer = SeededPRNG(seed: seed &+ 1)
+            var enc = encounter
+            var events: [Event] = []
+            let order = initiativeOrder(for: enc, seed: seed)
 
-        for (side, index, actor, _) in order {
-            // Skip if this combatant died earlier in the round
-            switch side {
-            case .allies: if enc.allies[safe: index]?.hp ?? 0 <= 0 { continue }
-            case .foes:   if enc.foes[safe: index]?.hp   ?? 0 <= 0 { continue }
+            var tick: UInt64 = 0
+            var rng: any Randomizer = SeededPRNG(seed: seed &+ 1)
+
+            // Thread the maps through each actor’s turn so changes persist within the round.
+            var statuses = initialStatuses
+            var mp       = initialMP
+            var equip    = initialEquipment
+
+            for (side, index, actor, _) in order {
+                // Skip if this combatant died earlier in the round
+                switch side {
+                case .allies: if enc.allies[safe: index]?.hp ?? 0 <= 0 { continue }
+                case .foes:   if enc.foes[safe: index]?.hp   ?? 0 <= 0 { continue }
+                }
+
+                var runtime = CombatRuntime<A>(
+                    tick: tick,
+                    encounter: enc,
+                    currentIndex: index,
+                    side: side,
+                    rngForInitiative: SeededPRNG(seed: seed),
+                    statuses: statuses,
+                    mp: mp,
+                    equipment: equip
+                )
+
+                events.append(Event(kind: .turnStart, timestamp: tick, data: ["actor": actor.name]))
+
+                // Skip if paralyzed
+                if runtime.isParalyzed(actor) {
+                    events.append(Event(kind: .note, timestamp: tick, data: [
+                        "skip": "paralyzed", "actor": actor.name
+                    ]))
+                    // End-of-turn poison tick even if skipped
+                    events.append(contentsOf: runtime.applyPoisonTick(on: actor))
+                    // Decrement durations globally
+                    events.append(contentsOf: runtime.tickStatuses())
+
+                    // Write back state & continue
+                    enc     = runtime.encounter
+                    statuses = runtime.statuses
+                    mp       = runtime.mp
+                    equip    = runtime.equipment
+                    tick &+= 1
+                    continue
+                }
+
+                // Default action: Attack
+                var action = Attack<A>(damage: Damage(kind: .physical, base: 5, scale: { (_: A) in 3 }))
+                let actionEvents = action.perform(in: &runtime, rng: &rng)
+                events.append(contentsOf: actionEvents)
+
+                // End-of-turn effects
+                events.append(contentsOf: runtime.applyPoisonTick(on: actor))
+                events.append(contentsOf: runtime.tickStatuses())
+
+                // Write back encounter state & maps for the next actor
+                enc      = runtime.encounter
+                statuses = runtime.statuses
+                mp       = runtime.mp
+                equip    = runtime.equipment
+                tick &+= 1
             }
 
-            var runtime = CombatRuntime<A>(
-                tick: tick,
-                encounter: enc,
-                currentIndex: index,
-                side: side,
-                rngForInitiative: SeededPRNG(seed: seed),
-                statuses: [:],
-                mp: [:]
-            )
-
-            events.append(Event(kind: .turnStart, timestamp: tick, data: ["actor": actor.name]))
-
-            // Default action: Attack (defined elsewhere)
-            
-            var action = Attack<A>(damage: Damage(kind: .physical, base: 5, scale: { (_: A) in 3 }))
-            let actionEvents = action.perform(in: &runtime, rng: &rng)
-            events.append(contentsOf: actionEvents)
-
-            // Write back encounter state
-            enc = runtime.encounter
-            tick &+= 1
+            return (events, enc)
         }
-
-        return (events, enc)
-    }
 }
