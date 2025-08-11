@@ -13,11 +13,14 @@ fileprivate extension Array {
 public struct Combatant<A: GameActor>: Identifiable, Sendable, Equatable {
     public var base: A
     public var hp: Int
+    public var xpValue: Int
+
     public var id: UUID { base.id }
 
-    public init(base: A, hp: Int) {
+    public init(base: A, hp: Int, xpValue: Int = 0) {
         self.base = base
         self.hp = hp
+        self.xpValue = xpValue
     }
 }
 

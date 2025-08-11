@@ -5,17 +5,40 @@
 //  Created by Kyle Peterson on 8/10/25.
 //
 
-import Foundation
-
 public extension TurnEngine where A == Character {
+
+    private func defeatedXP(_ enc: Encounter<Character>) -> Int {
+        enc.foes.reduce(0) { $0 + (($1.hp <= 0) ? $1.xpValue : 0) }
+    }
+
+    /// Grants XP to allies based on defeated foes, appends events, and writes back encounter state.
+    /// Returns appended events and possibly updated encounter.
+    private func awardXPIfAlliesWin(
+        enc: inout Encounter<Character>,
+        seed: UInt64,
+        tick: UInt64,
+        into events: inout [Event]
+    ) {
+        let total = defeatedXP(enc)
+        guard total > 0 else { return }
+
+        var rt = CombatRuntime<Character>(
+            tick: tick,
+            encounter: enc,
+            currentIndex: 0,
+            side: .allies,
+            rngForInitiative: SeededPRNG(seed: seed),
+            statuses: [:],
+            mp: [:],
+            equipment: [:],
+            levels: [:]
+        )
+        let xpEvents = rt.grantXPToAllies(totalXP: total)
+        events.append(contentsOf: xpEvents)
+        enc = rt.encounter
+    }
+
     /// Run combat until victory/defeat/stalemate. Deterministic given `seed`.
-    /// - Parameters:
-    ///   - encounter: starting state
-    ///   - allyControllers: one per ally (same order as `encounter.allies`)
-    ///   - foeControllers: one per foe   (same order as `encounter.foes`)
-    ///   - seed: base seed for initiative and actions
-    ///   - maxRounds: safety cap
-    /// - Returns: all emitted events and the final encounter + outcome
     func runUntilVictory(
         encounter: Encounter<Character>,
         allyControllers: [any Controller<Character>],
@@ -31,7 +54,10 @@ public extension TurnEngine where A == Character {
 
         for _ in 0..<maxRounds {
             // Victory check at start of round
-            if enc.foesDefeated { return (allEvents, enc, .alliesWin) }
+            if enc.foesDefeated {
+                awardXPIfAlliesWin(enc: &enc, seed: roundSeed, tick: 0, into: &allEvents)
+                return (allEvents, enc, .alliesWin)
+            }
             if enc.alliesDefeated { return (allEvents, enc, .foesWin) }
 
             // Determine order for this round
@@ -55,25 +81,11 @@ public extension TurnEngine where A == Character {
                     rngForInitiative: SeededPRNG(seed: roundSeed),
                     statuses: [:],
                     mp: [:],
-                    equipment: [:]
+                    equipment: [:],
+                    levels: [:]
                 )
 
                 allEvents.append(Event(kind: .turnStart, timestamp: tick, data: ["actor": actor.name]))
-                
-                // Skip if paralyzed
-                if rt.isParalyzed(actor) {
-                    allEvents.append(Event(kind: .note, timestamp: tick, data: [
-                        "skip": "paralyzed", "actor": actor.name
-                    ]))
-                    // End-of-turn poison and status ticking
-                    allEvents.append(contentsOf: rt.applyPoisonTick(on: actor))
-                    allEvents.append(contentsOf: rt.tickStatuses())
-                    enc = rt.encounter
-                    tick &+= 1
-                    if enc.foesDefeated { return (allEvents, enc, .alliesWin) }
-                    if enc.alliesDefeated { return (allEvents, enc, .foesWin) }
-                    continue
-                }
 
                 // Pick controller by side/index
                 let plan: ActionPlan<Character>?
@@ -89,16 +101,18 @@ public extension TurnEngine where A == Character {
                     allEvents.append(contentsOf: ev)
                 }
 
-                // Tick statuses at end of the actor’s turn
-                allEvents.append(contentsOf: rt.applyPoisonTick(on: actor))
+                // Tick statuses at end of the actor’s turn (optional)
                 allEvents.append(contentsOf: rt.tickStatuses())
 
                 // Write back encounter changes
                 enc = rt.encounter
                 tick &+= 1
 
-                // Check victory mid-round if you want immediate resolution
-                if enc.foesDefeated { return (allEvents, enc, .alliesWin) }
+                // Mid-round immediate victory check
+                if enc.foesDefeated {
+                    awardXPIfAlliesWin(enc: &enc, seed: roundSeed, tick: tick, into: &allEvents)
+                    return (allEvents, enc, .alliesWin)
+                }
                 if enc.alliesDefeated { return (allEvents, enc, .foesWin) }
             }
 
