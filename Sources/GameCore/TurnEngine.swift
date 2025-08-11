@@ -50,6 +50,9 @@ public struct CombatRuntime<A: GameActor>: Sendable {
     
     /// Per-combatant equipment keyed by Actor UUID (optional; tests can populate).
     public var equipment: [UUID: Equipment] = [:]
+    
+    /// Per-character leveling state keyed by Actor UUID.
+    public var levels: [UUID: LevelState] = [:]
 
     /// Defensive access to the current actor. Traps with a clear message if
     /// currentIndex does not exist on the chosen side.
