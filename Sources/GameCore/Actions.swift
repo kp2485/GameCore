@@ -54,86 +54,74 @@ public struct Attack<A: GameActor>: Action, @unchecked Sendable {
 // Equipment-aware variant that keeps your original Attack<A> untouched.
 // Call `performWithEquipment` when A == Character.
 extension Attack where A == Character {
-
+    
     /// Equipment-aware physical attack with hit/miss/crit, status + armor mitigation.
     public mutating func performWithEquipment(
         in state: inout CombatRuntime<Character>,
-        rng: inout any Randomizer
+        rng: inout any Randomizer,
+        rules: GameRules = .default
     ) -> [Event] {
         var out: [Event] = []
-
-        let src  = state.currentActor
-        let foes = state.foes(of: src)
+        let foes = state.foes(of: state.currentActor)
         guard let target = foes.first else { return out }
-
-        // Hit / Miss check
-        if !AccuracyModel.rollHit(attacker: src, defender: target, rng: &rng) {
+        
+        let srcEq = state.equipment[state.currentActor.id] ?? Equipment()
+        let tgtEq = state.equipment[target.id] ?? Equipment()
+        
+        let weapon  = EquipmentMath.weaponDamage(for: state.currentActor, eq: srcEq)
+        let statusM = state.mitigationPercent(for: target)
+        let armorM  = EquipmentMath.mitigationPercent(from: tgtEq)
+        
+        let result = CombatMath.resolvePhysicalAttack(
+            source: state.currentActor,
+            target: target,
+            weaponDamage: weapon,
+            baseBonus: 5,
+            statusMitigationPercent: statusM,
+            armorMitigationPercent: armorM,
+            rng: &rng,
+            rules: rules
+        )
+        
+        // Log hit or miss
+        if !result.hit {
             out.append(Event(kind: .note, timestamp: state.tick, data: [
+                "source": state.currentActor.name,
+                "target": target.name,
                 "result": "miss",
-                "source": src.name,
-                "target": target.name
+                "hitRoll": String(result.hitRoll),
+                "hitChance": String(result.hitChance)
             ]))
             return out
         }
-
-        // Equipment
-        let srcEq = state.equipment[src.id] ?? Equipment()
-        let tgtEq = state.equipment[target.id] ?? Equipment()
-
-        // Weapon damage contribution
-        let weapon = EquipmentMath.weaponDamage(for: src, eq: srcEq)
-
-        // Base before variance/mitigation: 5 + STR + weapon
-        let baseBonus = 5
-        let actionBase = baseBonus + src.stats[.str] + weapon
-
-        // Variance 0..2
-        let variance = Int(rng.uniform(3))
-        var beforeMitigation = max(0, actionBase - variance)
-
-        // Crit?
-        let crit = AccuracyModel.rollCrit(attacker: src, rng: &rng)
-        if crit {
-            beforeMitigation = AccuracyModel.applyCrit(to: beforeMitigation)
-        }
-
-        // Status + armor mitigation
-        let statusMit = state.mitigationPercent(for: target)
-        let armorMit  = EquipmentMath.mitigationPercent(from: tgtEq)
-        let combined  = Formula.combinedMitigation(statusPct: statusMit, armorPct: armorMit)
-
-        let total = Formula.finalDamage(base: beforeMitigation, mitigationPercent: combined)
-
+        
         // Apply damage
         if var hp = state.hp(of: target) {
             let before = hp
-            hp = max(0, before - total)
+            hp = max(0, before - result.total)
             state.setHP(of: target, to: hp)
-
+            
             out.append(Event(kind: .damage, timestamp: state.tick, data: [
-                "amount": String(total),
+                "amount": String(result.total),
                 "hpBefore": String(before),
                 "hpAfter": String(hp),
                 "target": target.name,
-                "source": src.name
+                "source": state.currentActor.name
             ]))
-
-            // telemetry
             out.append(Event(kind: .note, timestamp: state.tick, data: [
                 "weapon": String(weapon),
-                "variance": String(variance),
-                "mitigation": String(combined),
-                "crit": crit ? "true" : "false"
+                "variance": String(result.variance),
+                "mitigation": String(result.mitigation),
+                "hitRoll": String(result.hitRoll),
+                "hitChance": String(result.hitChance)
             ]))
-
             if hp == 0 {
                 out.append(Event(kind: .death, timestamp: state.tick, data: [
                     "target": target.name,
-                    "by": src.name
+                    "by": state.currentActor.name
                 ]))
             }
         }
-
         return out
     }
 }

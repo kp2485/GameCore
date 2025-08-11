@@ -33,7 +33,6 @@ public struct SimpleAI: Controller {
 
         // Capture config for the action thunk
         let rule = self.rule
-        let varianceMax = self.varianceMax
         let equipmentById = self.equipmentById
 
         return ActionPlan { (st: inout CombatRuntime<Character>, r: inout any Randomizer) in
@@ -45,29 +44,41 @@ public struct SimpleAI: Controller {
             let tgtEq = st.equipment[target.id]         ?? equipmentById[target.id]         ?? Equipment()
 
             // Weapon contribution
-            let weapon = EquipmentMath.weaponDamage(for: st.currentActor, eq: srcEq)
+            let weapon  = EquipmentMath.weaponDamage(for: st.currentActor, eq: srcEq)
+            let statusM = st.mitigationPercent(for: target)
+            let armorM  = EquipmentMath.mitigationPercent(from: tgtEq)
 
-            // Base physical attack: 5 + STR + weapon
-            let base = 5 + st.currentActor.stats[.str] + weapon
-            let variance = varianceMax > 0 ? Int(r.uniform(varianceMax &+ 1)) : 0
-            let beforeMit = max(0, base - variance)
-
-            // Combine mitigations: status + armor
-            let statusMit = st.mitigationPercent(for: target)
-            let armorMit  = EquipmentMath.mitigationPercent(from: tgtEq)
-            let mitPct    = Formula.combinedMitigation(statusPct: statusMit, armorPct: armorMit)
-            let total     = Formula.finalDamage(base: beforeMit, mitigationPercent: mitPct)
+            let res = CombatMath.resolvePhysicalAttack(
+                source: st.currentActor,
+                target: target,
+                weaponDamage: weapon,
+                baseBonus: 5,
+                statusMitigationPercent: statusM,
+                armorMitigationPercent: armorM,
+                rng: &r,
+                rules: .default
+            )
 
             var out: [Event] = []
 
-            // Apply
+            if !res.hit {
+                out.append(Event(kind: .note, timestamp: st.tick, data: [
+                    "source": st.currentActor.name,
+                    "target": target.name,
+                    "result": "miss",
+                    "hitRoll": String(res.hitRoll),
+                    "hitChance": String(res.hitChance)
+                ]))
+                return out
+            }
+
             if var hp = st.hp(of: target) {
                 let before = hp
-                hp = max(0, hp - total)
+                hp = max(0, hp - res.total)
                 st.setHP(of: target, to: hp)
 
                 out.append(Event(kind: .damage, timestamp: st.tick, data: [
-                    "amount": String(total),
+                    "amount": String(res.total),
                     "hpBefore": String(before),
                     "hpAfter": String(hp),
                     "target": target.name,
@@ -75,8 +86,10 @@ public struct SimpleAI: Controller {
                 ]))
                 out.append(Event(kind: .note, timestamp: st.tick, data: [
                     "weapon": String(weapon),
-                    "variance": String(variance),
-                    "mitigation": String(mitPct)
+                    "variance": String(res.variance),
+                    "mitigation": String(res.mitigation),
+                    "hitRoll": String(res.hitRoll),
+                    "hitChance": String(res.hitChance)
                 ]))
                 if hp == 0 {
                     out.append(Event(kind: .death, timestamp: st.tick, data: [
