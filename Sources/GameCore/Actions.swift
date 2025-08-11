@@ -55,47 +55,56 @@ public struct Attack<A: GameActor>: Action, @unchecked Sendable {
 // Call `performWithEquipment` when A == Character.
 extension Attack where A == Character {
 
-    /// Performs a basic physical attack that:
-    /// - adds weapon damage (main/off-hand),
-    /// - applies status + armor mitigation,
-    /// - updates HP and emits events.
-    ///
-    /// Targeting: first living foe (same as your simple Attack).
-    /// Variance: uniform [0, 2] by default (same feel as your base attack).
+    /// Equipment-aware physical attack with hit/miss/crit, status + armor mitigation.
     public mutating func performWithEquipment(
         in state: inout CombatRuntime<Character>,
         rng: inout any Randomizer
     ) -> [Event] {
         var out: [Event] = []
 
-        // Resolve default target = first living foe
-        let foes = state.foes(of: state.currentActor)
+        let src  = state.currentActor
+        let foes = state.foes(of: src)
         guard let target = foes.first else { return out }
 
-        // Pull equipment for source & target (if not present, treat as unarmed/unarmored)
-        let srcEq = state.equipment[state.currentActor.id] ?? Equipment()
+        // Hit / Miss check
+        if !AccuracyModel.rollHit(attacker: src, defender: target, rng: &rng) {
+            out.append(Event(kind: .note, timestamp: state.tick, data: [
+                "result": "miss",
+                "source": src.name,
+                "target": target.name
+            ]))
+            return out
+        }
+
+        // Equipment
+        let srcEq = state.equipment[src.id] ?? Equipment()
         let tgtEq = state.equipment[target.id] ?? Equipment()
 
-        // Weapon contribution (base + scaling) from main/off hand
-        let weapon = EquipmentMath.weaponDamage(for: state.currentActor, eq: srcEq)
+        // Weapon damage contribution
+        let weapon = EquipmentMath.weaponDamage(for: src, eq: srcEq)
 
-        // Raw action base before variance & mitigation: 5 (flat) + STR + weapon
+        // Base before variance/mitigation: 5 + STR + weapon
         let baseBonus = 5
-        let actionBase = baseBonus + state.currentActor.stats[.str] + weapon
+        let actionBase = baseBonus + src.stats[.str] + weapon
 
         // Variance 0..2
         let variance = Int(rng.uniform(3))
-        let beforeMitigation = max(0, actionBase - variance)
+        var beforeMitigation = max(0, actionBase - variance)
 
-        // Status mitigation from runtime + armor mitigation from equipment
+        // Crit?
+        let crit = AccuracyModel.rollCrit(attacker: src, rng: &rng)
+        if crit {
+            beforeMitigation = AccuracyModel.applyCrit(to: beforeMitigation)
+        }
+
+        // Status + armor mitigation
         let statusMit = state.mitigationPercent(for: target)
         let armorMit  = EquipmentMath.mitigationPercent(from: tgtEq)
         let combined  = Formula.combinedMitigation(statusPct: statusMit, armorPct: armorMit)
 
-        // Final damage
         let total = Formula.finalDamage(base: beforeMitigation, mitigationPercent: combined)
 
-        // Apply & emit events
+        // Apply damage
         if var hp = state.hp(of: target) {
             let before = hp
             hp = max(0, before - total)
@@ -106,19 +115,21 @@ extension Attack where A == Character {
                 "hpBefore": String(before),
                 "hpAfter": String(hp),
                 "target": target.name,
-                "source": state.currentActor.name
+                "source": src.name
             ]))
 
+            // telemetry
             out.append(Event(kind: .note, timestamp: state.tick, data: [
                 "weapon": String(weapon),
                 "variance": String(variance),
-                "mitigation": String(combined)
+                "mitigation": String(combined),
+                "crit": crit ? "true" : "false"
             ]))
 
             if hp == 0 {
                 out.append(Event(kind: .death, timestamp: state.tick, data: [
                     "target": target.name,
-                    "by": state.currentActor.name
+                    "by": src.name
                 ]))
             }
         }
