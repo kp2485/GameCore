@@ -15,14 +15,14 @@ public final class GameSaveEntity {
     public var name: String
     public var createdAt: Date
     public var notes: String?
-    public var gold: Int
+    public var gold: Int                // ← NEW
 
     public init(
         id: UUID = UUID(),
         name: String,
         createdAt: Date = .now,
         notes: String? = nil,
-        gold: Int = 0
+        gold: Int = 0                    // ← default 0
     ) {
         self.id = id
         self.name = name

@@ -23,7 +23,7 @@ public final class SDStack {
             for: RaceEntity.self, ClassEntity.self, CharacterEntity.self,
                 ItemEntity.self, EquipmentSlotEntity.self,
                 GameSaveEntity.self, PartyMemberEntity.self, SaveEquipmentSlotEntity.self, SaveInventoryItemEntity.self,
-                MapEntity.self, SaveFogEntity.self,
+                MapEntity.self, SaveFogEntity.self, ShopEntity.self, ShopOfferEntity.self,
             configurations: config
         )
     }
