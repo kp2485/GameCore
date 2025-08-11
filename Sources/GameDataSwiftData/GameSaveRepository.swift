@@ -24,12 +24,12 @@ public protocol GameSaveRepository: Sendable {
                   equipmentById: [UUID: Equipment],
                   inventoriesById: [UUID: [String: Int]],
                   notes: String?) throws -> UUID
-
+    
     func loadSave(id: UUID) throws -> (members: [Character],
                                        equipmentById: [UUID: Equipment],
                                        inventoriesById: [UUID: [String: Int]],
                                        meta: GameSaveMeta)
-
+    
     func loadLatest() throws -> UUID?
     func listSaves() throws -> [GameSaveMeta]
     func deleteSave(id: UUID) throws
@@ -39,7 +39,7 @@ public protocol GameSaveRepository: Sendable {
 public final class SDGameSaveRepository: GameSaveRepository {
     private let stack: SDStack
     public init(stack: SDStack) { self.stack = stack }
-
+    
     public func saveGame(name: String,
                          members: [Character],
                          equipmentById: [UUID: Equipment],
@@ -48,7 +48,7 @@ public final class SDGameSaveRepository: GameSaveRepository {
         let ctx = stack.context
         let save = GameSaveEntity(name: name, notes: notes)
         ctx.insert(save)
-
+        
         for (idx, m) in members.enumerated() {
             ctx.insert(PartyMemberEntity(
                 saveId: save.id,
@@ -58,7 +58,7 @@ public final class SDGameSaveRepository: GameSaveRepository {
                 stats: StatsCodec.encode(m.stats),
                 tags: Array(m.tags)
             ))
-
+            
             if let eq = equipmentById[m.id] {
                 for (slot, item) in eq.bySlot {
                     ctx.insert(SaveEquipmentSlotEntity(
@@ -69,7 +69,7 @@ public final class SDGameSaveRepository: GameSaveRepository {
                     ))
                 }
             }
-
+            
             if let inv = inventoriesById[m.id] {
                 for (itemId, qty) in inv {
                     ctx.insert(SaveInventoryItemEntity(
@@ -81,35 +81,35 @@ public final class SDGameSaveRepository: GameSaveRepository {
                 }
             }
         }
-
+        
         try ctx.save()
         return save.id
     }
-
+    
     public func loadSave(id: UUID) throws -> (members: [Character],
                                               equipmentById: [UUID: Equipment],
                                               inventoriesById: [UUID: [String: Int]],
                                               meta: GameSaveMeta) {
         let ctx = stack.context
-
+        
         // Save meta
         let sid = id
         var saveFd = FetchDescriptor<GameSaveEntity>(predicate: #Predicate { $0.id == sid })
         saveFd.fetchLimit = 1
         guard let save = try ctx.fetch(saveFd).first else { throw SwiftDataError.missingRecord }
         let meta = GameSaveMeta(id: save.id, name: save.name, createdAt: save.createdAt)
-
+        
         // Members (ordered)
         let memberFd = FetchDescriptor<PartyMemberEntity>(
             predicate: #Predicate { $0.saveId == sid },
             sortBy: [SortDescriptor(\.position, order: .forward)]
         )
         let memberRows = try ctx.fetch(memberFd)
-
+        
         let members: [Character] = memberRows.map {
             Character(name: $0.name, stats: StatsCodec.decode($0.stats), tags: Set($0.tags))
         }
-
+        
         // Equipment
         var equipmentById: [UUID: Equipment] = [:]
         let memberUUIDs = Set(memberRows.map { $0.originalUUID })
@@ -118,7 +118,7 @@ public final class SDGameSaveRepository: GameSaveRepository {
             predicate: #Predicate { $0.saveId == sid && uuids.contains($0.memberUUID) }
         )
         let slotRows = try ctx.fetch(slotFd)
-
+        
         let itemIds = Set(slotRows.map { $0.itemId })
         var itemMap: [String: ItemEntity] = [:]
         if !itemIds.isEmpty {
@@ -128,7 +128,7 @@ public final class SDGameSaveRepository: GameSaveRepository {
             let items = try ctx.fetch(itemFd)
             itemMap = items.reduce(into: [:]) { $0[$1.id] = $1 }
         }
-
+        
         for uuid in memberUUIDs {
             var bySlot: [EquipSlot: any Item] = [:]
             for row in slotRows where row.memberUUID == uuid {
@@ -138,7 +138,7 @@ public final class SDGameSaveRepository: GameSaveRepository {
             }
             if !bySlot.isEmpty { equipmentById[uuid] = Equipment(bySlot: bySlot) }
         }
-
+        
         // Inventories
         var inventoriesById: [UUID: [String: Int]] = [:]
         let invFd = FetchDescriptor<SaveInventoryItemEntity>(predicate: #Predicate { $0.saveId == sid })
@@ -146,41 +146,99 @@ public final class SDGameSaveRepository: GameSaveRepository {
         for row in invRows {
             inventoriesById[row.memberUUID, default: [:]][row.itemId] = row.quantity
         }
-
+        
         return (members, equipmentById, inventoriesById, meta)
     }
-
+    
     public func loadLatest() throws -> UUID? {
         let ctx = stack.context
         var fd = FetchDescriptor<GameSaveEntity>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
         fd.fetchLimit = 1
         return try ctx.fetch(fd).first?.id
     }
-
+    
     public func listSaves() throws -> [GameSaveMeta] {
         let ctx = stack.context
         let fd = FetchDescriptor<GameSaveEntity>(sortBy: [SortDescriptor(\.createdAt, order: .reverse)])
         return try ctx.fetch(fd).map { GameSaveMeta(id: $0.id, name: $0.name, createdAt: $0.createdAt) }
     }
-
+    
     public func deleteSave(id: UUID) throws {
         let ctx = stack.context
         let sid = id
-
+        
         let delSlots = FetchDescriptor<SaveEquipmentSlotEntity>(predicate: #Predicate { $0.saveId == sid })
         for row in try ctx.fetch(delSlots) { ctx.delete(row) }
-
+        
         let delInv = FetchDescriptor<SaveInventoryItemEntity>(predicate: #Predicate { $0.saveId == sid })
         for row in try ctx.fetch(delInv) { ctx.delete(row) }
-
+        
         let delMembers = FetchDescriptor<PartyMemberEntity>(predicate: #Predicate { $0.saveId == sid })
         for row in try ctx.fetch(delMembers) { ctx.delete(row) }
-
+        
         var saveFd = FetchDescriptor<GameSaveEntity>(predicate: #Predicate { $0.id == sid })
         saveFd.fetchLimit = 1
         if let s = try ctx.fetch(saveFd).first { ctx.delete(s) }
-
+        
         try ctx.save()
+    }
+    
+    // Add gold to a save's purse
+    public func addGold(saveId: UUID, amount: Int) throws {
+        guard amount > 0 else { return }
+        let ctx = stack.context
+        var fd = FetchDescriptor<GameSaveEntity>(predicate: #Predicate { $0.id == saveId })
+        fd.fetchLimit = 1
+        guard let row = try ctx.fetch(fd).first else { throw SwiftDataError.missingRecord }
+        row.gold = max(0, row.gold &+ amount)
+        try ctx.save()
+    }
+    
+    // Upsert item quantities to a specific member’s inventory
+    public func addItems(saveId: UUID, memberUUID: UUID, items: [String:Int]) throws {
+        guard !items.isEmpty else { return }
+        let ctx = stack.context
+        
+        // Fetch all existing rows for this member to upsert quickly
+        let invFd = FetchDescriptor<SaveInventoryItemEntity>(
+            predicate: #Predicate { $0.saveId == saveId && $0.memberUUID == memberUUID }
+        )
+        let rows = try ctx.fetch(invFd)
+        var byId: [String: SaveInventoryItemEntity] = [:]
+        for r in rows { byId[r.itemId] = r }
+        
+        for (itemId, delta) in items {
+            guard delta > 0 else { continue }
+            if let existing = byId[itemId] {
+                existing.quantity = max(1, existing.quantity &+ delta)
+            } else {
+                ctx.insert(SaveInventoryItemEntity(
+                    saveId: saveId,
+                    memberUUID: memberUUID,
+                    itemId: itemId,
+                    quantity: delta
+                ))
+            }
+        }
+        try ctx.save()
+    }
+    
+    // Optional: expose current gold (handy for UI/tests)
+    public func currentGold(saveId: UUID) throws -> Int {
+        let ctx = stack.context
+        var fd = FetchDescriptor<GameSaveEntity>(predicate: #Predicate { $0.id == saveId })
+        fd.fetchLimit = 1
+        return try ctx.fetch(fd).first?.gold ?? 0
+    }
+    
+    @MainActor
+    public func orderedMemberUUIDs(saveId: UUID) throws -> [UUID] {
+        let ctx = stack.context
+        let fd = FetchDescriptor<PartyMemberEntity>(
+            predicate: #Predicate { $0.saveId == saveId },
+            sortBy: [SortDescriptor(\.position, order: .forward)]
+        )
+        return try ctx.fetch(fd).map { $0.originalUUID }
     }
 }
 #endif

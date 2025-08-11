@@ -154,4 +154,58 @@ public extension CombatRuntime where A == Character {
         for (id, eq) in map { equipment[id] = eq }
     }
 }
+
+public enum LootDistribution: Sendable {
+    case toFirstPartyMember      // default
+    case toMember(UUID)          // explicit target
+    case roundRobin              // across members in order
+}
+
+@MainActor
+public extension GameSaveService {
+    func applyBattleRewards(
+        saveId: UUID,
+        events: [Event],
+        distribution: LootDistribution = .toFirstPartyMember
+    ) throws -> RewardSummary {
+        let summary = RewardSummary.from(events: events)
+
+        if summary.gold > 0 {
+            try repo.addGold(saveId: saveId, amount: summary.gold)
+        }
+
+        guard !summary.loot.isEmpty else { return summary }
+
+        // Use original UUIDs in save order
+        let uuids = try repo.orderedMemberUUIDs(saveId: saveId)
+        guard !uuids.isEmpty else { return summary }
+
+        switch distribution {
+        case .toFirstPartyMember:
+            let target = uuids.first!
+            try repo.addItems(
+                saveId: saveId,
+                memberUUID: target,
+                items: summary.loot.reduce(into: [:]) { $0[$1.itemId] = $1.qty }
+            )
+
+        case .toMember(let id):
+            try repo.addItems(
+                saveId: saveId,
+                memberUUID: id,
+                items: summary.loot.reduce(into: [:]) { $0[$1.itemId] = $1.qty }
+            )
+
+        case .roundRobin:
+            var idx = 0
+            for s in summary.loot {
+                let target = uuids[idx % uuids.count]
+                try repo.addItems(saveId: saveId, memberUUID: target, items: [s.itemId: s.qty])
+                idx &+= 1
+            }
+        }
+
+        return summary
+    }
+}
 #endif

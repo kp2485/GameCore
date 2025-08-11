@@ -15,12 +15,20 @@ public final class GameSaveEntity {
     public var name: String
     public var createdAt: Date
     public var notes: String?
+    public var gold: Int
 
-    public init(id: UUID = UUID(), name: String, createdAt: Date = .now, notes: String? = nil) {
+    public init(
+        id: UUID = UUID(),
+        name: String,
+        createdAt: Date = .now,
+        notes: String? = nil,
+        gold: Int = 0
+    ) {
         self.id = id
         self.name = name
         self.createdAt = createdAt
         self.notes = notes
+        self.gold = max(0, gold)
     }
 }
 
