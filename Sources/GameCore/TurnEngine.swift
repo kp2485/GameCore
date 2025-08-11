@@ -14,13 +14,16 @@ public struct Combatant<A: GameActor>: Identifiable, Sendable, Equatable {
     public var base: A
     public var hp: Int
     public var xpValue: Int
-
+    public var goldValue: Int
+    public var loot: LootBundle?
     public var id: UUID { base.id }
 
-    public init(base: A, hp: Int, xpValue: Int = 0) {
+    public init(base: A, hp: Int, xpValue: Int = 0, goldValue: Int = 0, loot: LootBundle? = nil) {
         self.base = base
         self.hp = hp
         self.xpValue = xpValue
+        self.goldValue = goldValue
+        self.loot = loot
     }
 }
 

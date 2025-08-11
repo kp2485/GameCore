@@ -7,38 +7,81 @@
 
 public extension TurnEngine where A == Character {
 
+    // MARK: - Reward helpers
+
     private func defeatedXP(_ enc: Encounter<Character>) -> Int {
         enc.foes.reduce(0) { $0 + (($1.hp <= 0) ? $1.xpValue : 0) }
     }
 
-    /// Grants XP to allies based on defeated foes, appends events, and writes back encounter state.
-    /// Returns appended events and possibly updated encounter.
-    private func awardXPIfAlliesWin(
+    private func defeatedGold(_ enc: Encounter<Character>) -> Int {
+        enc.foes.reduce(0) { $0 + (($1.hp <= 0) ? $1.goldValue : 0) }
+    }
+
+    /// Roll and aggregate loot from all defeated foes using a deterministic RNG.
+    private func defeatedLoot(_ enc: Encounter<Character>, rng: inout any Randomizer) -> [(id: String, qty: Int)] {
+        var all: [String: Int] = [:]
+        for f in enc.foes where f.hp <= 0 {
+            if let bundle = f.loot {
+                for (id, q) in bundle.roll(rng: &rng) {
+                    all[id, default: 0] += q
+                }
+            }
+        }
+        return all.map { ($0.key, $0.value) }
+    }
+
+    /// Grants XP, gold, and loot on allies' victory; appends events; writes back encounter.
+    private func awardVictoryRewards(
         enc: inout Encounter<Character>,
         seed: UInt64,
         tick: UInt64,
         into events: inout [Event]
     ) {
-        let total = defeatedXP(enc)
-        guard total > 0 else { return }
+        // 1) XP
+        let totalXP = defeatedXP(enc)
+        if totalXP > 0 {
+            var rt = CombatRuntime<Character>(
+                tick: tick,
+                encounter: enc,
+                currentIndex: 0,
+                side: .allies,
+                rngForInitiative: SeededPRNG(seed: seed),
+                statuses: [:],
+                mp: [:],
+                equipment: [:],
+                levels: [:]
+            )
+            let xpEvents = rt.grantXPToAllies(totalXP: totalXP)
+            events.append(contentsOf: xpEvents)
+            enc = rt.encounter
+        }
 
-        var rt = CombatRuntime<Character>(
-            tick: tick,
-            encounter: enc,
-            currentIndex: 0,
-            side: .allies,
-            rngForInitiative: SeededPRNG(seed: seed),
-            statuses: [:],
-            mp: [:],
-            equipment: [:],
-            levels: [:]
-        )
-        let xpEvents = rt.grantXPToAllies(totalXP: total)
-        events.append(contentsOf: xpEvents)
-        enc = rt.encounter
+        // 2) Gold
+        let gold = defeatedGold(enc)
+        if gold > 0 {
+            events.append(Event(kind: .goldAwarded, timestamp: tick, data: ["amount": String(gold)]))
+        }
+
+        // 3) Loot (deterministic roll from a separate stream)
+        var lootRNG: any Randomizer = SeededPRNG(seed: seed &+ 777)
+        let drops = defeatedLoot(enc, rng: &lootRNG)
+        for d in drops where d.qty > 0 {
+            events.append(Event(kind: .lootDropped, timestamp: tick, data: [
+                "itemId": d.id, "qty": String(d.qty)
+            ]))
+        }
     }
 
+    // MARK: - Battle loop
+
     /// Run combat until victory/defeat/stalemate. Deterministic given `seed`.
+    /// - Parameters:
+    ///   - encounter: starting state
+    ///   - allyControllers: one per ally (same order as `encounter.allies`)
+    ///   - foeControllers: one per foe   (same order as `encounter.foes`)
+    ///   - seed: base seed for initiative and actions
+    ///   - maxRounds: safety cap
+    /// - Returns: all emitted events and the final encounter + outcome
     func runUntilVictory(
         encounter: Encounter<Character>,
         allyControllers: [any Controller<Character>],
@@ -55,7 +98,7 @@ public extension TurnEngine where A == Character {
         for _ in 0..<maxRounds {
             // Victory check at start of round
             if enc.foesDefeated {
-                awardXPIfAlliesWin(enc: &enc, seed: roundSeed, tick: 0, into: &allEvents)
+                awardVictoryRewards(enc: &enc, seed: roundSeed, tick: 0, into: &allEvents)
                 return (allEvents, enc, .alliesWin)
             }
             if enc.alliesDefeated { return (allEvents, enc, .foesWin) }
@@ -110,7 +153,7 @@ public extension TurnEngine where A == Character {
 
                 // Mid-round immediate victory check
                 if enc.foesDefeated {
-                    awardXPIfAlliesWin(enc: &enc, seed: roundSeed, tick: tick, into: &allEvents)
+                    awardVictoryRewards(enc: &enc, seed: roundSeed, tick: tick, into: &allEvents)
                     return (allEvents, enc, .alliesWin)
                 }
                 if enc.alliesDefeated { return (allEvents, enc, .foesWin) }
