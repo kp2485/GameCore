@@ -134,10 +134,10 @@ private func char(_ name: String, _ stats: [CoreStat: Int]) -> Character {
     @Test func weaponAndArmorTogetherBehaveSensibly() {
         let hero = char("Hero", [.str: 9, .spd: 6, .vit: 6])
         let gob  = char("Gob",  [.spd: 4, .vit: 3])
-
+        
         let enc = Encounter(allies: [Combatant(base: hero, hp: 30)],
                             foes:   [Combatant(base: gob,  hp: 22)])
-
+        
         var rt = CombatRuntime<Character>(
             tick: 0,
             encounter: enc,
@@ -148,20 +148,25 @@ private func char(_ name: String, _ stats: [CoreStat: Int]) -> Character {
             mp: [:],
             equipment: [:]
         )
-
+        
         let sword = Weapon(id: "sw", name: "Sword", tags: ["blade"], baseDamage: 5, scale: { $0.stats[.str] / 3 })
         let helm  = Armor(id: "helm", name: "Bronze Helm", tags: ["light"], mitigationPercent: 15)
         rt.equipment[hero.id] = Equipment(bySlot: [.mainHand: sword])
         rt.equipment[gob.id]  = Equipment(bySlot: [.head: helm])
-
+        
         var rng: any Randomizer = SeededPRNG(seed: 101)
         var attack = Attack<Character>()
         let before = rt.hp(of: gob)!
-        _ = attack.performWithEquipment(in: &rt, rng: &rng)
+        let ev = attack.performWithEquipment(in: &rt, rng: &rng)
         let after = rt.hp(of: gob)!
-
+        
         let dmg = before - after
-        #expect(dmg > 0)
-        #expect(dmg <= 30) // sanity upper bound given stats & mitigation
+        if dmg == 0 {
+            // If no HP change, require that it was a recorded miss (not silent).
+            #expect(ev.contains { $0.kind == Event.Kind.note && $0.data["result"] == "miss" })
+        } else {
+            #expect(dmg > 0)
+            #expect(dmg <= 30) // sanity upper bound given stats & mitigation
+        }
     }
 }

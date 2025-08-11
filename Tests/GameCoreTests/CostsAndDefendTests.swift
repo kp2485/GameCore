@@ -38,7 +38,7 @@ private func char(_ name: String, _ stats: [CoreStat: Int]) -> Character {
 
         var rng: any Randomizer = SeededPRNG(seed: 10)
 
-        let bolt = Ability<Character>(name: "Bolt", costMP: 3, targeting: .singleEnemy) {
+        let bolt = Ability<Character>(name: "Bolt", costMP: 3, targeting: .firstFoe) {
             AnyEffect(Damage<Character>(kind: .shock, base: 4, scale: { _ in 2 }))
         }
 

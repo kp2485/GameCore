@@ -11,17 +11,17 @@ import Foundation
 public struct Ability<A: GameActor>: Sendable {
     public let name: String
     public let costMP: Int
-    public let targeting: Targeting
+    public let targeting: TargetingMode
     public let effects: [AnyEffect<A>]
 
-    public init(name: String, costMP: Int, targeting: Targeting, effects: [AnyEffect<A>]) {
+    public init(name: String, costMP: Int, targeting: TargetingMode, effects: [AnyEffect<A>]) {
         self.name = name
         self.costMP = costMP
         self.targeting = targeting
         self.effects = effects
     }
 
-    public init(name: String, costMP: Int, targeting: Targeting, @EffectBuilder<A> _ build: () -> [AnyEffect<A>]) {
+    public init(name: String, costMP: Int, targeting: TargetingMode, @EffectBuilder<A> _ build: () -> [AnyEffect<A>]) {
         self.name = name
         self.costMP = costMP
         self.targeting = targeting
