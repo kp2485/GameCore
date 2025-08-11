@@ -43,11 +43,15 @@ public struct CellWalls: OptionSet, Sendable, Codable, Hashable {
 
 public enum Feature: Sendable, Codable, Hashable {
     case none
-    case door(locked: Bool, secret: Bool)
-    case stairsUp, stairsDown
+    case door(locked: Bool, secret: Bool, lockDC: Int? = nil, lockSkill: String? = nil)
+    case stairsUp
+    case stairsDown
     case portal(mapId: String, to: GridCoord)
     case chest(id: String, locked: Bool)
     case trigger(id: String)
+    case note(text: String)
+    case lever(id: String, isOn: Bool)
+    case trap(id: String, detectDC: Int, disarmDC: Int, damage: Int, once: Bool, armed: Bool)
 }
 
 public struct Cell: Sendable, Codable, Hashable {

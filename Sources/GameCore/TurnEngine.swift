@@ -255,7 +255,8 @@ public struct TurnEngine<A: GameActor>: Sendable {
             events.append(Event(kind: .turnStart, timestamp: tick, data: ["actor": actor.name]))
 
             // Default action: Attack (defined elsewhere)
-            var action = Attack<A>()
+            
+            var action = Attack<A>(damage: Damage(kind: .physical, base: 5, scale: { (_: A) in 3 }))
             let actionEvents = action.perform(in: &runtime, rng: &rng)
             events.append(contentsOf: actionEvents)
 

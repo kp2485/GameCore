@@ -85,8 +85,10 @@ private func char(_ name: String, _ stats: [CoreStat: Int]) -> Character {
         var rng1: any Randomizer = SeededPRNG(seed: 3)
         var rng2: any Randomizer = SeededPRNG(seed: 3)
 
-        var attack1 = Attack<Character>()
-        var attack2 = Attack<Character>()
+        var attack1 = Attack<Character>(damage: Damage(kind: .physical, base: 5, scale: { (c: Character) -> Int in
+            c.stats[.str] }))
+        var attack2 = Attack<Character>(damage: Damage(kind: .physical, base: 3, scale: { (c: Character) -> Int in
+            c.stats[.str] }))
 
         let hpbefore1 = rtNoDef.hp(of: hero)!
         _ = attack1.perform(in: &rtNoDef, rng: &rng1)

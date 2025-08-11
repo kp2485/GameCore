@@ -62,7 +62,8 @@ private func char(_ name: String, _ stats: [CoreStat: Int]) -> Character {
             rngForInitiative: SeededPRNG(seed: 1)
         )
 
-        var action = Attack<Character>()
+        var action = Attack<Character>(damage: Damage(kind: .physical, base: 5, scale: { (c: Character) -> Int in
+            c.stats[.str] }))
         let before = rt.hp(of: b)!
         let events = action.perform(in: &rt, rng: &rng)
         let after = rt.hp(of: b)!

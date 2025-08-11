@@ -20,10 +20,11 @@ public final class SDStack {
         let config = ModelConfiguration(isStoredInMemoryOnly: inMemory)
         // IMPORTANT: include ALL models used by this container
         self.container = try ModelContainer(
-          for: RaceEntity.self, ClassEntity.self, CharacterEntity.self,
-              ItemEntity.self, EquipmentSlotEntity.self,   // existing
-              GameSaveEntity.self, PartyMemberEntity.self, SaveEquipmentSlotEntity.self, SaveInventoryItemEntity.self,
-          configurations: config
+            for: RaceEntity.self, ClassEntity.self, CharacterEntity.self,
+                ItemEntity.self, EquipmentSlotEntity.self,
+                GameSaveEntity.self, PartyMemberEntity.self, SaveEquipmentSlotEntity.self, SaveInventoryItemEntity.self,
+                MapEntity.self, SaveFogEntity.self,
+            configurations: config
         )
     }
     public var context: ModelContext { ModelContext(container) }

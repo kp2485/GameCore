@@ -7,7 +7,7 @@
 
 import Foundation
 
-// MARK: - Action protocol
+// MARK: - Action protocol (3-method shape)
 public protocol Action: Sendable {
     associatedtype A: GameActor
     func legality(in state: CombatRuntime<A>) -> Bool
@@ -15,35 +15,31 @@ public protocol Action: Sendable {
     mutating func perform(in state: inout CombatRuntime<A>, rng: inout any Randomizer) -> [Event]
 }
 
-// MARK: - Basic Attack
-public struct Attack<A: GameActor>: Action {
-    public init() {}
-    
+// MARK: - Basic Attack (uses your Damage<A>.apply(to:state:rng:))
+public struct Attack<A: GameActor>: Action, @unchecked Sendable {
+    public var damage: Damage<A>
+    public init(damage: Damage<A>) { self.damage = damage }
+
     public func legality(in state: CombatRuntime<A>) -> Bool {
         !state.foes(of: state.currentActor).isEmpty
     }
-    
+
     public func selectTargets(in state: CombatRuntime<A>, rng: inout any Randomizer) -> [A] {
         let foes = state.foes(of: state.currentActor)
         return foes.isEmpty ? [] : [foes[0]]
     }
-    
+
+    @discardableResult
     public mutating func perform(
         in state: inout CombatRuntime<A>,
-        rng: inout any Randomizer  // <- existential
+        rng: inout any Randomizer
     ) -> [Event] {
+        guard legality(in: state) else { return [] }
         var out: [Event] = []
-        let damage = Damage<A>(
-            kind: .physical,
-            base: 5,
-            scale: { actor in
-                if let c = actor as? Character { return c.stats[.str] }
-                return 3
-            }
-        )
-        
+
         for var target in selectTargets(in: state, rng: &rng) {
             out += damage.apply(to: &target, state: &state, rng: &rng)
+
             if state.hp(of: target) == 0 {
                 out.append(Event(kind: .death, timestamp: state.tick, data: [
                     "target": target.name,
@@ -83,8 +79,7 @@ extension Attack where A == Character {
         // Weapon contribution (base + scaling) from main/off hand
         let weapon = EquipmentMath.weaponDamage(for: state.currentActor, eq: srcEq)
 
-        // Raw action base before variance & mitigation:
-        //   5 (flat) + STR + weapon
+        // Raw action base before variance & mitigation: 5 (flat) + STR + weapon
         let baseBonus = 5
         let actionBase = baseBonus + state.currentActor.stats[.str] + weapon
 
@@ -132,7 +127,13 @@ extension Attack where A == Character {
     }
 }
 
-public struct Cast<A: GameActor>: Action {
+public extension Attack {
+    init() {
+        self.damage = Damage(kind: .physical, base: 5, scale: { (_: A) -> Int in 3 })
+    }
+}
+
+public struct Cast<A: GameActor>: Action, @unchecked Sendable {
     public let ability: Ability<A>
     public init(_ ability: Ability<A>) { self.ability = ability }
 
@@ -173,7 +174,7 @@ public struct Cast<A: GameActor>: Action {
 }
 
 // Defend applies a one-turn shield status (20% mitigation)
-public struct Defend<A: GameActor>: Action {
+public struct Defend<A: GameActor>: Action, @unchecked Sendable {
     public init() {}
     public func legality(in state: CombatRuntime<A>) -> Bool { true }
     public func selectTargets(in state: CombatRuntime<A>, rng: inout any Randomizer) -> [A] { [state.currentActor] }
@@ -184,6 +185,3 @@ public struct Defend<A: GameActor>: Action {
         return [Event(kind: .note, timestamp: state.tick, data: ["defend": state.currentActor.name])]
     }
 }
-
-// Utility existential RNG that ignores calls, for legality probes
-@inline(__always) private func noRng() -> any Randomizer { SeededPRNG(seed: 0) }

@@ -7,27 +7,58 @@
 
 import Foundation
 
-/// Basic passability rules for movement between neighboring tiles.
+/// Helpers for edge-accurate movement rules on `GameMap`.
 public enum Navigation {
-    /// Returns true if you can move from `p` toward `dir` given map cell walls/features.
-    public static func canMove(from p: GridCoord, toward dir: Direction, on map: GameMap) -> Bool {
-        guard map.inBounds(p), let q = map.neighbor(of: p, toward: dir) else { return false }
-        let a = map[p]
-        let b = map[q]
-
-        // Solid walls block (either side)
-        if a.walls.contains(wallFlag(for: dir)) { return false }
-        if b.walls.contains(wallFlag(for: dir.opposite)) { return false }
-
-        // Locked door blocks at either side
-        if isLockedDoor(a.feature) && (dir == .north || dir == .east || dir == .south || dir == .west) { return false }
-        if isLockedDoor(b.feature) { return false }
-
-        return true
+    
+    /// Returns `true` if movement across the edge from `a` toward `dir` is blocked.
+    /// An edge is blocked if:
+    /// - Either tile places a wall on that shared edge, or
+    /// - The destination tile contains a door feature (locked/secret/any door variant), or
+    /// - The destination is out of bounds.
+    public static func edgeBlocked(from a: GridCoord, toward dir: Direction, on map: GameMap) -> Bool {
+        guard let b = map.neighbor(of: a, toward: dir) else { return true }
+        
+        // Walls placed on either side of the shared edge block.
+        let aw: CellWalls = map[a].walls
+        let bw: CellWalls = map[b].walls
+        if aw.contains(wallFor(dir)) { return true }
+        if bw.contains(wallFor(opposite(of: dir))) { return true }
+        
+        // NEW: secret edge/door presence blocks until revealed.
+        if aw.contains(.secret) { return true }
+        if bw.contains(.secret) { return true }
+        
+        // Doors on either side block until opened (feature becomes .none).
+        switch map[a].feature {
+        case .door: return true
+        default: break
+        }
+        switch map[b].feature {
+        case .door: return true
+        default: break
+        }
+        
+        return false
     }
-
+    
+    /// Can we move a full step from `a` toward `dir` (i.e., across the edge and into the tile)?
+    public static func canMove(from a: GridCoord, toward dir: Direction, on map: GameMap) -> Bool {
+        guard let b = map.neighbor(of: a, toward: dir) else { return false }
+        if edgeBlocked(from: a, toward: dir, on: map) { return false }
+        
+        // If destination tile still has a blocking feature, disallow (redundant with edgeBlocked’s door check,
+        // but keeps room for future blocking features).
+        switch map[b].feature {
+        case .door: return false
+        default:    return true
+        }
+    }
+    
+    // MARK: - Private helpers
+    
+    /// Map a facing to its wall bit on the *origin* tile.
     @inline(__always)
-    private static func wallFlag(for dir: Direction) -> CellWalls {
+    private static func wallFor(_ dir: Direction) -> CellWalls {
         switch dir {
         case .north: return .north
         case .east:  return .east
@@ -35,10 +66,15 @@ public enum Navigation {
         case .west:  return .west
         }
     }
-
+    
+    /// Opposite cardinal.
     @inline(__always)
-    private static func isLockedDoor(_ f: Feature) -> Bool {
-        if case let .door(locked, _) = f { return locked }
-        return false
+    private static func opposite(of dir: Direction) -> Direction {
+        switch dir {
+        case .north: return .south
+        case .east:  return .west
+        case .south: return .north
+        case .west:  return .east
+        }
     }
 }

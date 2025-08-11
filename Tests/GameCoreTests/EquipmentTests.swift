@@ -69,7 +69,11 @@ private func char(_ name: String, _ stats: [CoreStat: Int]) -> Character {
 
         // Perform attack using the equipment-aware variant
         var rng: any Randomizer = SeededPRNG(seed: 7)
-        var attack = Attack<Character>()
+        var attack = Attack<Character>(
+            damage: Damage(kind: .physical, base: 5, scale: { (c: Character) -> Int in
+                c.stats[.str]     // add STR to base
+            })
+        )
         let before = rt.hp(of: gob)!
         _ = attack.perform(in: &rt, rng: &rng) // extension picks first foe
         let after = rt.hp(of: gob)!
